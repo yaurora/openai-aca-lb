@@ -29,10 +29,10 @@ public class BackendConfig
         foreach (var backendIndex in numberOfBackends)
         {
             var key = $"BACKEND_{backendIndex}";
-            var url = LoadEnvironmentVariable(environmentVariables, backendIndex, "URL");
+            var url = LoadRequiredEnvironmentVariable(environmentVariables, backendIndex, "URL");
             var deploymentName = LoadEnvironmentVariable(environmentVariables, backendIndex, "DEPLOYMENT_NAME", isMandatory: false);
             var apiKey = LoadEnvironmentVariable(environmentVariables, backendIndex, "APIKEY", isMandatory: false);
-            var priority = Convert.ToInt32(LoadEnvironmentVariable(environmentVariables, backendIndex, "PRIORITY"));
+            var priority = Convert.ToInt32(LoadRequiredEnvironmentVariable(environmentVariables, backendIndex, "PRIORITY"));
 
             returnDictionary.Add(key, new BackendConfig { Url = url, ApiKey = apiKey, Priority = priority, DeploymentName = deploymentName });
         }
@@ -108,6 +108,12 @@ public class BackendConfig
         {
             return null;
         }
+    }
+
+    private static string LoadRequiredEnvironmentVariable(IDictionary<string, string?> variables, string backendIndex, string property)
+    {
+        return LoadEnvironmentVariable(variables, backendIndex, property, isMandatory: true)
+            ?? throw new Exception($"Missing environment variable BACKEND_{backendIndex}_{property}");
     }
 }
     

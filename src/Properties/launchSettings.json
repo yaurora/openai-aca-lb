@@ -5,6 +5,7 @@
       "launchBrowser": true,
       "environmentVariables": {
         "ASPNETCORE_ENVIRONMENT": "Development",
+        "EXPOSE_BACKEND_HEADER": "true",
       },
       "dotnetRunMessages": true,
       "applicationUrl": "https://localhost:7151"
