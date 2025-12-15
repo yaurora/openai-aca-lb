@@ -1,1 +1,10 @@
 .azure
+
+#Ignore vscode AI rules
+.github\instructions\codacy.instructions.md
+src/Properties/launchSettings.json
+.github/instructions/codacy.instructions.md
+src/Properties/launchSettings.json
+src/Properties/launchSettings.local.json
+.codacy/codacy.yaml
+src/launchSettings.local.json

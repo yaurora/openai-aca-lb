@@ -18,4 +18,12 @@
     <PackageReference Include="Yarp.ReverseProxy" Version="2.1.0" />
   </ItemGroup>
 
+  <!-- Exclude the test project folder from the web app project compilation. -->
+  <ItemGroup>
+    <Compile Remove="openai-loadbalancer.Tests\**\*.cs" />
+    <Compile Remove="openai-loadbalancer.Tests\**\*.csproj" />
+    <Content Remove="openai-loadbalancer.Tests\**" />
+    <None Remove="openai-loadbalancer.Tests\**" />
+  </ItemGroup>
+
 </Project>

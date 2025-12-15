@@ -4,6 +4,10 @@ public class BackendConfig
 {
     public static int HttpTimeoutSeconds = 100;
 
+    public static Version? HttpRequestVersion { get; private set; }
+    public static System.Net.Http.HttpVersionPolicy? HttpRequestVersionPolicy { get; private set; }
+    public static bool ExposeBackendHeader { get; private set; }
+
     public required string Url { get; set; }
     public string? DeploymentName { get; set; }
     public int Priority { get; set; }
@@ -41,7 +45,50 @@ public class BackendConfig
             HttpTimeoutSeconds = Convert.ToInt32(httpTimeout);
         }
 
+        var httpRequestVersion = Environment.GetEnvironmentVariable("HTTP_REQUEST_VERSION");
+        if (!string.IsNullOrWhiteSpace(httpRequestVersion))
+        {
+            HttpRequestVersion = ParseHttpVersion(httpRequestVersion);
+        }
+
+        var httpRequestVersionPolicy = Environment.GetEnvironmentVariable("HTTP_REQUEST_VERSION_POLICY");
+        if (!string.IsNullOrWhiteSpace(httpRequestVersionPolicy))
+        {
+            HttpRequestVersionPolicy = ParseHttpVersionPolicy(httpRequestVersionPolicy);
+        }
+
+        var exposeBackendHeader = Environment.GetEnvironmentVariable("EXPOSE_BACKEND_HEADER");
+        ExposeBackendHeader = string.Equals(exposeBackendHeader?.Trim(), "true", StringComparison.OrdinalIgnoreCase);
+
         return returnDictionary;
+    }
+
+    internal static TimeSpan? GetActivityTimeout()
+    {
+        return HttpTimeoutSeconds <= 0 ? null : TimeSpan.FromSeconds(HttpTimeoutSeconds);
+    }
+
+    internal static Version ParseHttpVersion(string raw)
+    {
+        var value = raw.Trim();
+
+        return value switch
+        {
+            "1.0" => System.Net.HttpVersion.Version10,
+            "1.1" => System.Net.HttpVersion.Version11,
+            "2.0" => System.Net.HttpVersion.Version20,
+            _ => throw new ArgumentException($"Invalid HTTP_REQUEST_VERSION '{raw}'. Valid values: 1.0, 1.1, 2.0")
+        };
+    }
+
+    internal static System.Net.Http.HttpVersionPolicy ParseHttpVersionPolicy(string raw)
+    {
+        if (Enum.TryParse<System.Net.Http.HttpVersionPolicy>(raw.Trim(), ignoreCase: true, out var policy))
+        {
+            return policy;
+        }
+
+        throw new ArgumentException($"Invalid HTTP_REQUEST_VERSION_POLICY '{raw}'. Valid values: RequestVersionOrLower, RequestVersionOrHigher, RequestVersionExact");
     }
 
     private static string? LoadEnvironmentVariable(IDictionary<string, string?> variables, string backendIndex, string property, bool isMandatory = true)

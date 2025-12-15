@@ -159,7 +159,10 @@ This is the list of environment variables that are used to configure the load ba
 
 | Environment variable name | Mandatory | Description                                                                                                                                                                                                                                         | Example |
 |---------------------------|-----------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|---------|
-| HTTP_TIMEOUT_SECONDS      | No        | If set, it will change the default 100 seconds timeout when waiting for OpenAI responses to something else.<br>If a timeout is reached, the endpoint it will be marked unhealthy for 10 seconds and the request will fallback to another backend. | 120     |
+| HTTP_TIMEOUT_SECONDS      | No        | Changes the default 100 seconds activity timeout while waiting for OpenAI responses.<br>Set to `0` to disable the activity timeout (useful for long-running/streaming scenarios).<br>If a timeout is reached, the endpoint it will be marked unhealthy for 10 seconds and the request will fallback to another backend. | 120     |
+| HTTP_REQUEST_VERSION      | No        | Forces the outgoing HTTP request version to the backend (`1.0`, `1.1`, or `2.0`). Useful if your backend/proxy has issues negotiating HTTP/2.                                                                                                | 1.1     |
+| HTTP_REQUEST_VERSION_POLICY | No      | Controls .NET `HttpVersionPolicy` used for backend requests (`RequestVersionOrLower`, `RequestVersionOrHigher`, `RequestVersionExact`).                                                                                                         | RequestVersionOrLower |
+| EXPOSE_BACKEND_HEADER     | No        | If set to `true`, adds debug headers to every proxied response to show which backend was used (`x-openai-lb-backend-id`, `x-openai-lb-backend-deployment`, `x-openai-lb-backend-url`).                                                          | true    |
 
 ### Testing the solution
 

@@ -48,6 +48,41 @@ public class YarpConfiguration
             destinations.Add(backend.Key, new DestinationConfig { Address = backend.Value.Url, Metadata = metadata });
         }
 
+        ForwarderRequestConfig forwarderRequestConfig;
+
+        if (BackendConfig.HttpRequestVersion != null && BackendConfig.HttpRequestVersionPolicy != null)
+        {
+            forwarderRequestConfig = new ForwarderRequestConfig
+            {
+                ActivityTimeout = BackendConfig.GetActivityTimeout(),
+                Version = BackendConfig.HttpRequestVersion,
+                VersionPolicy = BackendConfig.HttpRequestVersionPolicy.Value
+            };
+        }
+        else if (BackendConfig.HttpRequestVersion != null)
+        {
+            forwarderRequestConfig = new ForwarderRequestConfig
+            {
+                ActivityTimeout = BackendConfig.GetActivityTimeout(),
+                Version = BackendConfig.HttpRequestVersion
+            };
+        }
+        else if (BackendConfig.HttpRequestVersionPolicy != null)
+        {
+            forwarderRequestConfig = new ForwarderRequestConfig
+            {
+                ActivityTimeout = BackendConfig.GetActivityTimeout(),
+                VersionPolicy = BackendConfig.HttpRequestVersionPolicy.Value
+            };
+        }
+        else
+        {
+            forwarderRequestConfig = new ForwarderRequestConfig
+            {
+                ActivityTimeout = BackendConfig.GetActivityTimeout()
+            };
+        }
+
         return
         [
                 new ClusterConfig()
@@ -62,7 +97,7 @@ public class YarpConfiguration
                         }
                     },
                     Destinations = destinations,
-                    HttpRequest = new ForwarderRequestConfig { ActivityTimeout = TimeSpan.FromSeconds(BackendConfig.HttpTimeoutSeconds) }
+                    HttpRequest = forwarderRequestConfig
                 }
         ];
     }
@@ -71,6 +106,21 @@ public class YarpConfiguration
     {
         return context =>
         {
+            if (BackendConfig.ExposeBackendHeader)
+            {
+                var reverseProxyContext = context.HttpContext.GetReverseProxyFeature();
+                var destinationId = reverseProxyContext?.ProxiedDestination?.DestinationId;
+
+                if (!string.IsNullOrWhiteSpace(destinationId) && backends.TryGetValue(destinationId, out var backend))
+                {
+                    var headers = context.HttpContext.Response.Headers;
+
+                    headers.TryAdd("x-openai-lb-backend-id", destinationId);
+                    headers.TryAdd("x-openai-lb-backend-deployment", backend.DeploymentName ?? string.Empty);
+                    headers.TryAdd("x-openai-lb-backend-url", backend.Url);
+                }
+            }
+
             if (context.ProxyResponse?.StatusCode is HttpStatusCode.TooManyRequests or >= HttpStatusCode.InternalServerError)
             {
                 var reverseProxyContext = context.HttpContext.GetReverseProxyFeature();

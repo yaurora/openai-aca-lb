@@ -28,10 +28,41 @@ public class RetryMiddleware
 
         while (shouldRetry)
         {
+            if (context.RequestAborted.IsCancellationRequested)
+            {
+                _logger.LogInformation("Request aborted before proxying (attempt {Attempt}).", retryCount + 1);
+                return;
+            }
+
             var reverseProxyFeature = context.GetReverseProxyFeature();
             var destination = PickOneDestination(context);
 
-            reverseProxyFeature.AvailableDestinations = new List<DestinationState>(destination);
+            if (destination == null)
+            {
+                context.Response.StatusCode = StatusCodes.Status404NotFound;
+
+                var hasDeployment = TryGetRequestedDeploymentName(context.Request.Path, out var deployment);
+                var message = hasDeployment
+                    ? $"No backend configured for requested deployment '{deployment}'."
+                    : "No backend configured for requested deployment.";
+
+                await context.Response.WriteAsync(message);
+                return;
+            }
+
+            var hasRequestedDeploymentName = TryGetRequestedDeploymentName(context.Request.Path, out var requestedDeploymentName);
+            var backend = _backends[destination.DestinationId];
+
+            _logger.LogInformation(
+                "Proxy attempt {Attempt}: deployment={Deployment} backend={BackendId} url={BackendUrl} priority={Priority}",
+                retryCount + 1,
+                hasRequestedDeploymentName ? requestedDeploymentName : "(none)",
+                destination.DestinationId,
+                backend.Url,
+                backend.Priority);
+
+            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+            reverseProxyFeature.AvailableDestinations = new List<DestinationState> { destination };
 
             if (retryCount > 0)
             {
@@ -43,12 +74,38 @@ public class RetryMiddleware
 
             await _next(context);
 
+            if (context.RequestAborted.IsCancellationRequested)
+            {
+                _logger.LogInformation(
+                    "Request aborted while proxying (attempt {Attempt}, elapsedMs={ElapsedMs}).",
+                    retryCount + 1,
+                    stopwatch.ElapsedMilliseconds);
+                return;
+            }
+
             var statusCode = context.Response.StatusCode;
             var atLeastOneBackendHealthy = GetNumberHealthyEndpoints(context) > 0;
             retryCount++;
 
-            shouldRetry = (statusCode is 429 or >= 500) && atLeastOneBackendHealthy;
+            shouldRetry = ShouldRetry(statusCode, atLeastOneBackendHealthy, requestAborted: false);
+
+            _logger.LogInformation(
+                "Proxy attempt {Attempt} completed: status={StatusCode} elapsedMs={ElapsedMs} willRetry={WillRetry}",
+                retryCount,
+                statusCode,
+                stopwatch.ElapsedMilliseconds,
+                shouldRetry);
         }
+    }
+
+    internal static bool ShouldRetry(int statusCode, bool atLeastOneBackendHealthy, bool requestAborted)
+    {
+        if (requestAborted)
+        {
+            return false;
+        }
+
+        return (statusCode is 429 or >= 500) && atLeastOneBackendHealthy;
     }
 
     private static int GetNumberHealthyEndpoints(HttpContext context)
@@ -61,15 +118,47 @@ public class RetryMiddleware
     /// The native YARP ILoadBalancingPolicy interface does not play well with HTTP retries, that's why we're adding this custom load-balancing code.
     /// This needs to be reevaluated to a ILoadBalancingPolicy implementation when YARP supports natively HTTP retries.
     /// </summary>
-    private DestinationState PickOneDestination(HttpContext context)
+    private DestinationState? PickOneDestination(HttpContext context)
     {
         var reverseProxyFeature = context.GetReverseProxyFeature();
         var allDestinations = reverseProxyFeature.AllDestinations;
 
+        if (allDestinations.Count == 0)
+        {
+            _logger.LogWarning("No destinations available in reverse proxy feature.");
+            return null;
+        }
+
+        var requestedDeploymentName = TryGetRequestedDeploymentName(context.Request.Path, out var deploymentName) ? deploymentName : null;
+
+        // If the request targets a specific deployment, only consider backends configured for that deployment.
+        // If none match at all, fail fast rather than silently routing to a different deployment.
+        var candidateIndexes = requestedDeploymentName == null
+            ? Enumerable.Range(0, allDestinations.Count).ToArray()
+            : Enumerable.Range(0, allDestinations.Count)
+                .Where(i =>
+                {
+                    var destinationId = allDestinations[i].DestinationId;
+                    if (!_backends.TryGetValue(destinationId, out var backend))
+                    {
+                        return false;
+                    }
+
+                    return backend.DeploymentName != null &&
+                           string.Equals(backend.DeploymentName, requestedDeploymentName, StringComparison.OrdinalIgnoreCase);
+                })
+                .ToArray();
+
+        if (requestedDeploymentName != null && candidateIndexes.Length == 0)
+        {
+            _logger.LogWarning("No backend configured for requested deployment '{DeploymentName}'", requestedDeploymentName);
+            return null;
+        }
+
         var selectedPriority = int.MaxValue;
         var availableBackends = new List<int>();
 
-        for (var i = 0; i < allDestinations.Count; i++)
+        foreach (var i in candidateIndexes)
         {
             var destination = allDestinations[i];
 
@@ -105,13 +194,37 @@ public class RetryMiddleware
         }
         else
         {
-            //Returns a random  backend if all backends are unhealthy
-            _logger.LogWarning($"All backends are unhealthy. Picking a random backend...");
-            backendIndex = Random.Shared.Next(0, allDestinations.Count);
+            // Returns a random backend if all candidates are unhealthy
+            _logger.LogWarning("All candidate backends are unhealthy. Picking a random backend...");
+            backendIndex = candidateIndexes[Random.Shared.Next(0, candidateIndexes.Length)];
         }
 
         var pickedDestination = allDestinations[backendIndex];
 
         return pickedDestination;
+    }
+
+    internal static bool TryGetRequestedDeploymentName(PathString path, out string deploymentName)
+    {
+        deploymentName = string.Empty;
+
+        if (!path.HasValue)
+        {
+            return false;
+        }
+
+        // Expected format: /openai/deployments/{deploymentName}/...
+        var segments = path.Value!.Split('/', StringSplitOptions.RemoveEmptyEntries);
+
+        if (segments.Length >= 3 &&
+            string.Equals(segments[0], "openai", StringComparison.OrdinalIgnoreCase) &&
+            string.Equals(segments[1], "deployments", StringComparison.OrdinalIgnoreCase) &&
+            !string.IsNullOrWhiteSpace(segments[2]))
+        {
+            deploymentName = segments[2];
+            return true;
+        }
+
+        return false;
     }
 }
